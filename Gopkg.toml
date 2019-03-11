@@ -1,0 +1,16 @@
+required = [
+    "github.com/hashicorp/terraform",
+]
+
+[[constraint]]
+    name = "github.com/hashicorp/terraform"
+    source = "https://github.com/hashicorp/terraform.git"
+    version = "^0.11.11"
+
+[[constraint]]
+  branch = "master"
+  name = "golang.org/x/oauth2"
+
+[[constraint]]
+  name = "google.golang.org/api"
+  version = "0.1.0"
