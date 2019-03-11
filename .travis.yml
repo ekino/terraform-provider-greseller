@@ -2,7 +2,6 @@ services:
   - docker
 language: go
 go:
-  - "1.9"
   - "1.10"
   - "1.11"
 
@@ -12,16 +11,26 @@ before_install:
 
 script:
   - 'if [ "${TRAVIS_BUILD_DIR}" != "${GOPATH}/src/github.com/ekino/terraform-provider-greseller" ]; then ln -s "${TRAVIS_BUILD_DIR}" "${GOPATH}/src/github.com/ekino/terraform-provider-greseller"; fi'
-  - make dep
+  - make deps
   - make test
-  - VERSION=${TRAVIS_TAG} make build
 
-deploy:
-  provider: releases
-  api_key:
-    secure: "P00EXcRD+WQ+RnuTFT3RwdsxkAwjm7631pXaBWeeYOra1XatqSlFyF3st8vXPjT9N1Kz3TsvHx7vRQ1yCnyHlx3BJyHpiE9+cr1Hrcl3RtJ0PQGhkCl4hKmiwRVwzZrMiG8ydBUof6h7jyoJG21QcFZG/qEThBi+UNb0wv9njJ5dQPbmuTijNt9cEVUOX4TzADyXxSPFYtbmLL63PKjt6HDZHAydcnVsHGwyWFr4HawDFMuRfzq5adtCBvgct1royCFLjhst1antWexws26AIPSS2v2SFVRCBUR+3ioPls5DB49W7kV7nNjVipuRI8CNv0oIo3LSL+p1nCcKyS/q+jjior+8Z40YwMS8Y5y77+RucMM8L0re5WD81+cGHYawKtXQD1R+haHhajAgdqnqQHJtKZLf9viPGpoA0HMzyNZkttrginUCQaFjrvQ0fA/kGidJVPLLhjxA7h8WTtdVQdzRz0el2X1w34TKlxyVJ6f9exwbpL1GPVeiKCKylPDWJtZT+rjUVFOAkMKxnfgyIT43XPUjdJb6ukFzEJkPo9BmFAr/rZ8+lPgJf+M9NOCrQZBNYo9MhuUiO6k4bO/6TPJ/gtHMIyafnnKFpJOMIs5D0nZBIXsrhnSuR0DU+Y2FsTLwjmZ3XZQa7QA5U5HUjUXqKwXZWvHcvTGE8/A+00k="
-  file_glob: true
-  file: pkg/dist/*
-  skip_cleanup: true
-  on:
-    tags: true
+cache:
+  directories:
+    - ${GOPATH}/pkg/dep/sources
+
+stages:
+  - name: release
+    if: tag IS present
+
+jobs:
+  include:
+    - stage: release
+      go: "1.11"
+      script: VERSION=${TRAVIS_TAG} make build
+      deploy:
+        provider: releases
+        api_key:
+          secure: "P00EXcRD+WQ+RnuTFT3RwdsxkAwjm7631pXaBWeeYOra1XatqSlFyF3st8vXPjT9N1Kz3TsvHx7vRQ1yCnyHlx3BJyHpiE9+cr1Hrcl3RtJ0PQGhkCl4hKmiwRVwzZrMiG8ydBUof6h7jyoJG21QcFZG/qEThBi+UNb0wv9njJ5dQPbmuTijNt9cEVUOX4TzADyXxSPFYtbmLL63PKjt6HDZHAydcnVsHGwyWFr4HawDFMuRfzq5adtCBvgct1royCFLjhst1antWexws26AIPSS2v2SFVRCBUR+3ioPls5DB49W7kV7nNjVipuRI8CNv0oIo3LSL+p1nCcKyS/q+jjior+8Z40YwMS8Y5y77+RucMM8L0re5WD81+cGHYawKtXQD1R+haHhajAgdqnqQHJtKZLf9viPGpoA0HMzyNZkttrginUCQaFjrvQ0fA/kGidJVPLLhjxA7h8WTtdVQdzRz0el2X1w34TKlxyVJ6f9exwbpL1GPVeiKCKylPDWJtZT+rjUVFOAkMKxnfgyIT43XPUjdJb6ukFzEJkPo9BmFAr/rZ8+lPgJf+M9NOCrQZBNYo9MhuUiO6k4bO/6TPJ/gtHMIyafnnKFpJOMIs5D0nZBIXsrhnSuR0DU+Y2FsTLwjmZ3XZQa7QA5U5HUjUXqKwXZWvHcvTGE8/A+00k="
+        file_glob: true
+        file: pkg/dist/*
+        skip_cleanup: true
