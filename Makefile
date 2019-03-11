@@ -6,7 +6,7 @@
 # Project metadata
 GOVERSION := 1.11
 PROJECT := github.com/ekino/terraform-provider-greseller
-NAME := $(notdir $(PROJECT))
+NAME := terraform-provider-greseller
 VERSION ?= 0.0.0
 
 # Path to Terraform plugins for devevelopment tests
@@ -26,6 +26,9 @@ XC_EXCLUDE ?= darwin/386 darwin/arm solaris/386 solaris/arm windows/arm
 MKFILE_PATH := $(lastword $(MAKEFILE_LIST))
 CURRENT_DIR := $(patsubst %/,%,$(dir $(realpath $(MKFILE_PATH))))
 
+USER_ID := $(shell id -u)
+USER_GROUP_ID := $(shell id -g)
+
 # Build flags
 LD_FLAGS ?= -s -w
 GOTAGS ?=
@@ -44,6 +47,9 @@ WHITE  = $(shell printf "\33[37m")
 YELLOW = $(shell printf "\33[33m")
 RESET  = $(shell printf "\33[0m")
 
+MAKEFLAGS += --no-print-directory
+
+.ONESHELL:
 
 ########################################################################################################################
 #
@@ -51,36 +57,41 @@ RESET  = $(shell printf "\33[0m")
 #
 ########################################################################################################################
 
+.PHONY: dev
 dev: ##@dev build plugin and install in terraform plugin path for tests
 	@mkdir -p "${PLUGIN_PATH}"
-	@go build \
-		-ldflags "${LD_FLAGS}" \
-		-tags "${GOTAGS}" \
-		-o "${PLUGIN_PATH}/terraform-provider-greseller"
-.PHONY: dev
+	@go build -ldflags "${LD_FLAGS}" -tags "${GOTAGS}" -o "${PLUGIN_PATH}/terraform-provider-greseller"
 
-deps: ##@dev Install dependencies
-	@dep ensure -v
-	@dep prune
-.PHONY: deps
-
-deps-update: ##@dev Update dependencies
+.PHONY: dep
+dep: ##@dev Update dependencies
 	@dep ensure -v -update
 	@dep prune
-.PHONY: deps-update
 
+.PHONY: test
 test: ##@dev runs all tests
 	@echo "${RED}There is currently no tests. TODO${RESET}"
 	#go test -i $(TEST) || exit 1
 	#echo $(TEST) | \
 	#	xargs -t -n4 go test $(TESTARGS) -timeout=30s -parallel=4
-.PHONY: test
+
 
 ########################################################################################################################
 #
 # BUILD PROCESS
 #
 ########################################################################################################################
+_build: ##@build Build release
+	@ext=""
+	@if [ "${GOOS}" = "windows" ]; then 
+	@  ext=".exe";
+	@fi
+	@CGO_ENABLED="0" \
+	 GOOS="${GOOS}" \
+	 GOARCH="${GOARCH}" \
+	 go build -a \
+	 	 -o "pkg/${GOOS}_${GOARCH}/${NAME}_v${VERSION}$${ext}" \
+		 -ldflags "${LD_FLAGS}" \
+		 -tags "${GOTAGS}"
 
 # Create a cross-compile target for every os-arch pairing. This will generate
 # a make target for each os/arch like "make linux/amd64" as well as generate a
@@ -88,23 +99,20 @@ test: ##@dev runs all tests
 define make-xc-target
   $1/$2:
   ifneq (,$(findstring ${1}/${2},$(XC_EXCLUDE)))
-		@echo "${RED}Build for platform ${1}/${2} was excluded${RESET}"
+		@+echo "${RED}Build for platform ${1}/${2} was excluded${RESET}"
   else
-		@echo "${YELLOW}Building for platform ${1}/${2}${RESET}"
-		@docker run \
-			--rm \
-			--volume="${CURRENT_DIR}:/go/src/${PROJECT}" \
-			--workdir="/go/src/${PROJECT}" \
-			"golang:${GOVERSION}" \
-			env \
-				CGO_ENABLED="0" \
-				GOOS="${1}" \
-				GOARCH="${2}" \
-				go build \
-				  -a \
-					-o="pkg/${1}_${2}/${NAME}_v${VERSION}${3}" \
-					-ldflags "${LD_FLAGS}" \
-					-tags "${GOTAGS}"
+		@+echo "${YELLOW}Building for platform ${1}/${2}${RESET}"
+    ifdef CI
+			@GOOS=${1} GOARCH=${2} $(MAKE) -f "${MKFILE_PATH}" _build
+    else 
+			@docker run \
+				-u ${USER_ID}:${USER_GROUP_ID} \
+				--rm \
+				--volume="${CURRENT_DIR}:/go/src/${PROJECT}" \
+				--workdir="/go/src/${PROJECT}" \
+				"golang:${GOVERSION}" \
+				env GOOS=${1} GOARCH=${2} make _build
+    endif
   endif
   .PHONY: $1/$2
 
@@ -121,43 +129,44 @@ $(foreach goarch,$(XC_ARCH),$(foreach goos,$(XC_OS),$(eval $(call make-xc-target
 # RELEASE PROCESS
 #
 ########################################################################################################################
+.PHONY: dist
 dist: ##@dist build for all platforms, compress and compute checksum
 	@$(MAKE) -f "${MKFILE_PATH}" clean
-	@$(MAKE) -f "${MKFILE_PATH}" -j4 build
+	@$(MAKE) -f "${MKFILE_PATH}" -j2 build
 	@$(MAKE) -f "${MKFILE_PATH}" compress checksum
-.PHONY: dist
 
+.PHONY: clean
 clean: ##@release removes any previous binaries
 	@echo "${YELLOW}Clean build artifacts${RESET}"
 	@rm -rf "${CURRENT_DIR}/pkg/"
 	@rm -rf "${CURRENT_DIR}/bin/"
-.PHONY: clean
 
+.PHONY: compress
 compress: ##@release compresses all the binaries in pkg/* as tarball and zip
 	@echo "${YELLOW}Compress binaries for release${RESET}"
 	@mkdir -p "${CURRENT_DIR}/pkg/dist"
-	@for platform in $$(find ./pkg -mindepth 1 -maxdepth 1 -type d); do \
-		osarch=$$(basename "$$platform"); \
-		if [ "$$osarch" = "dist" ]; then \
-			continue; \
-		fi; \
-		\
-		ext=""; \
-		if test -z "$${osarch##*windows*}"; then \
-			ext=".exe"; \
-		fi; \
-		cd "$$platform"; \
-		tar -czf "${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_$${osarch}.tgz" "${NAME}_v${VERSION}$${ext}"; \
-		zip -q "${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_$${osarch}.zip" "${NAME}_v${VERSION}$${ext}"; \
-		cd - &>/dev/null; \
-	done
-.PHONY: compress
+	@for platform in $$(find ./pkg -mindepth 1 -maxdepth 1 -type d); do
+	@  osarch=$$(basename "$$platform");
+	@  if [ "$$osarch" = "dist" ]; then
+	@    continue;
+	@  fi
+	@
+	@  ext=""
+	@  if test -z "$${osarch##*windows*}"; then 
+	@    ext=".exe";
+	@  fi
+	@  cd "$$platform";
+	@  tar -czf "${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_$${osarch}.tgz" "${NAME}_v${VERSION}$${ext}";
+	@  zip -q "${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_$${osarch}.zip" "${NAME}_v${VERSION}$${ext}";
+	@  cd ${CURRENT_DIR};
+	@done
+
 
 checksum: ##@release produces the checksums for compressed binaries
 	@echo "${YELLOW}Compute checksum${RESET}"
-	@cd "${CURRENT_DIR}/pkg/dist" && \
-		shasum --algorithm 256 * > ${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_SHA256SUMS && \
-		cd - &>/dev/null
+	@cd "${CURRENT_DIR}/pkg/dist"
+	@shasum --algorithm 256 * > ${CURRENT_DIR}/pkg/dist/${NAME}_${VERSION}_SHA256SUMS
+	@cd ${CURRENT_DIR}
 .PHONY: checksum
 
 sign: ##@release sign checksum using the given GPG_KEY.
